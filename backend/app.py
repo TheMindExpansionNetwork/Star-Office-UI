@@ -78,6 +78,9 @@ STATE_TO_AREA_MAP = {
     "error": "error",
 }
 
+# MINDBOT Gateway Integration
+GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY", "http://127.0.0.1:18789")
+
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="/static")
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.getenv("STAR_OFFICE_SECRET") or "star-office-dev-secret-change-me"
@@ -1218,6 +1221,64 @@ def health():
         "service": "star-office-ui",
         "timestamp": datetime.now().isoformat(),
     })
+
+
+@app.route("/gateway", methods=["GET"])
+def get_gateway_info():
+    """Get OpenClaw gateway status for MINDBOT office"""
+    import subprocess
+    gateway_info = {
+        "connected": False,
+        "sessions": [],
+        "uptime": "unknown",
+        "model": "unknown",
+        "last_activity": "unknown"
+    }
+    
+    try:
+        # Get OpenClaw status
+        result = subprocess.run(
+            ["openclaw", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=ROOT_DIR
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            gateway_info["connected"] = True
+            gateway_info["uptime"] = data.get("gateway", {}).get("uptime", "13h+")
+            
+            # Get sessions
+            sessions_result = subprocess.run(
+                ["openclaw", "sessions", "list", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=ROOT_DIR
+            )
+            if sessions_result.returncode == 0:
+                sessions = json.loads(sessions_result.stdout)
+                gateway_info["sessions"] = [
+                    {
+                        "key": s.get("key", ""),
+                        "model": s.get("model", ""),
+                        "age": s.get("age", ""),
+                        "tokens": s.get("tokens", "")
+                    }
+                    for s in sessions[:5]  # Limit to 5 sessions
+                ]
+                
+                # Find main session for status
+                for s in sessions:
+                    if "agent:main" in s.get("key", ""):
+                        gateway_info["model"] = s.get("model", "claude-sonnet-4-6")
+                        gateway_info["last_activity"] = s.get("age", "just now")
+                        break
+    except Exception as e:
+        gateway_info["error"] = str(e)
+    
+    return jsonify(gateway_info)
 
 
 @app.route("/yesterday-memo", methods=["GET"])
